@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>NL Verkenner</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; background: #111827; }
+    #map { width: 100%; height: 100%; touch-action: pan-x pan-y; }
+
+    /* ── HUD ─────────────────────────────────────────────────────────────── */
+    #hud {
+      position: fixed; top: 12px; left: 12px; z-index: 1000;
+      display: flex; flex-direction: column; gap: 7px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+
+    .card {
+      background: rgba(15, 20, 40, 0.90);
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.10);
+      border-radius: 14px; padding: 10px 14px; color: #fff;
+    }
+
+    #stat-n    { font-size: 28px; font-weight: 800; color: #4ade80; line-height: 1.05; letter-spacing: -0.5px; }
+    #stat-lbl  { font-size: 10px; color: rgba(255,255,255,.50); margin-top: 1px; text-transform: uppercase; letter-spacing: .5px; }
+    #stat-area { font-size: 12px; color: rgba(255,255,255,.65); margin-top: 5px; }
+    #zoom-hint { font-size: 10px; color: rgba(255,255,255,.40); margin-top: 4px; display: none; }
+    #zoom-hint.show { display: block; }
+
+    #gps-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: rgba(255,255,255,.75); }
+    #gps-dot {
+      width: 9px; height: 9px; border-radius: 50%; background: #ef4444;
+      flex-shrink: 0; transition: background .4s, box-shadow .4s;
+    }
+    #gps-dot.on {
+      background: #22c55e; box-shadow: 0 0 0 3px rgba(34,197,94,.20);
+      animation: blink 2.4s ease-in-out infinite;
+    }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.35} }
+
+    /* ── FAB buttons ─────────────────────────────────────────────────────── */
+    #fab {
+      position: fixed; bottom: 24px; right: 14px; z-index: 1000;
+      display: flex; flex-direction: column; gap: 9px;
+    }
+
+    .fab-btn {
+      width: 48px; height: 48px;
+      background: rgba(15, 20, 40, 0.90);
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255,255,255,.12); border-radius: 14px;
+      color: rgba(255,255,255,.80); font-size: 20px;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; -webkit-tap-highlight-color: transparent; user-select: none;
+      transition: border-color .2s, color .2s, background .15s;
+    }
+    .fab-btn:active { background: rgba(74,222,128,.15); }
+    .fab-btn.active { border-color: #4ade80; color: #4ade80; }
+  </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div id="hud">
+  <div class="card">
+    <div id="stat-n">0</div>
+    <div id="stat-lbl">vakjes bezocht</div>
+    <div id="stat-area">≈ 0 m²</div>
+    <div id="zoom-hint">Zoom in om raster te zien</div>
+  </div>
+  <div class="card">
+    <div id="gps-row">
+      <div id="gps-dot"></div>
+      <span id="gps-txt">Wacht op GPS…</span>
+    </div>
+  </div>
+</div>
+
+<div id="fab">
+  <button class="fab-btn active" id="btn-loc" title="Volg positie">⊕</button>
+  <button class="fab-btn" id="btn-p"   title="Inzoomen">+</button>
+  <button class="fab-btn" id="btn-m"   title="Uitzoomen">−</button>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+'use strict';
+
+// ── Grid constants ────────────────────────────────────────────────────────────
+const CELL = 100;     // metres per side
+const ER   = 6378137; // Web Mercator earth radius (metres)
+
+// ── Web Mercator conversion ───────────────────────────────────────────────────
+function toMerc(lat, lon) {
+  return {
+    x: ER * lon * Math.PI / 180,
+    y: ER * Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360))
+  };
+}
+
+function fromMerc(x, y) {
+  return {
+    lat: (2 * Math.atan(Math.exp(y / ER)) - Math.PI / 2) * 180 / Math.PI,
+    lon: x / ER * 180 / Math.PI
+  };
+}
+
+// ── Storage (IndexedDB) ───────────────────────────────────────────────────────
+const DB_NAME = 'nlverk';
+const DB_VER  = 2; // bump clears old 10 m cell data (incompatible keys)
+const IDB_STORE = 'cells';
+const LS_KEY  = 'nlverk_v2'; // old localStorage key – migrated on first run
+
+let db    = null;
+let cells = new Map(); // "gx,gy" → visit count  (in-memory working copy)
+
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VER);
+    req.onupgradeneeded = e => {
+      const d = e.target.result;
+      if (d.objectStoreNames.contains(IDB_STORE)) d.deleteObjectStore(IDB_STORE);
+      d.createObjectStore(IDB_STORE, { keyPath: 'k' });
+    };
+    req.onsuccess = e => resolve(e.target.result);
+    req.onerror   = e => reject(e.target.error);
+  });
+}
+
+async function migrateFromLS(idb) {
+  const raw = localStorage.getItem(LS_KEY);
+  if (!raw) return;
+  try {
+    const entries = Object.entries(JSON.parse(raw));
+    if (!entries.length) return;
+    const tx    = idb.transaction(IDB_STORE, 'readwrite');
+    const store = tx.objectStore(IDB_STORE);
+    for (const [k, n] of entries) store.put({ k, n: +n });
+    await new Promise((ok, err) => { tx.oncomplete = ok; tx.onerror = err; });
+    localStorage.removeItem(LS_KEY);
+    console.log(`${entries.length} vakjes gemigreerd van localStorage → IndexedDB`);
+  } catch (e) { console.warn('Migratie mislukt:', e); }
+}
+
+function loadAllCells(idb) {
+  return new Promise((resolve, reject) => {
+    const req = idb.transaction(IDB_STORE, 'readonly').objectStore(IDB_STORE).getAll();
+    req.onsuccess = e => { cells = new Map(e.target.result.map(r => [r.k, r.n])); resolve(); };
+    req.onerror   = e => reject(e.target.error);
+  });
+}
+
+function saveCell(key, count) {
+  if (!db) return;
+  try { db.transaction(IDB_STORE, 'readwrite').objectStore(IDB_STORE).put({ k: key, n: count }); }
+  catch (e) { console.warn('IDB schrijffout:', e); }
+}
+
+// ── Cell fill color (light → dark green with visits) ─────────────────────────
+function cellColor(n) {
+  const t = Math.min(1, Math.log1p(n) / Math.log1p(30));
+  const g = Math.round(215 - 165 * t);
+  return `rgba(8,${g},45,${(0.38 + 0.52 * t).toFixed(2)})`;
+}
+
+// ── Map initialisation ────────────────────────────────────────────────────────
+const map = L.map('map', {
+  center: [52.20, 5.38], zoom: 13,
+  zoomControl: false, attributionControl: false
+});
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+L.control.attribution({
+  prefix: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+  position: 'bottomleft'
+}).addTo(map);
+
+// ── Canvas grid overlay ───────────────────────────────────────────────────────
+const GridLayer = L.Layer.extend({
+  onAdd(m) {
+    this._map = m;
+    const cv = this._cv = document.createElement('canvas');
+    cv.style.cssText = 'position:absolute;pointer-events:none;';
+    // overlayPane is already inside the map's stacking context at z-index 400
+    // (above tiles at 200, below markers at 600) — guaranteed visible
+    m.getPane('overlayPane').appendChild(cv);
+    m.on('moveend zoomend viewreset', this.draw, this);
+    this.draw();
+  },
+
+  onRemove(m) {
+    m.off('moveend zoomend viewreset', this.draw, this);
+    this._cv.remove();
+  },
+
+  draw() {
+    const m = this._map, cv = this._cv;
+    const size = m.getSize();
+    cv.width  = size.x;
+    cv.height = size.y;
+    // Keep the canvas aligned with the viewport inside the pane
+    // (the pane shifts during pan; on moveend we reset to the new origin)
+    L.DomUtil.setPosition(cv, m.containerPointToLayerPoint([0, 0]));
+    const ctx = cv.getContext('2d');
+
+    const bounds = m.getBounds();
+    const ctr    = bounds.getCenter();
+    const swM    = toMerc(bounds.getSouth(), bounds.getWest());
+    const neM    = toMerc(bounds.getNorth(), bounds.getEast());
+
+    const gx0 = Math.floor(swM.x / CELL) - 1, gx1 = Math.ceil(neM.x / CELL) + 1;
+    const gy0 = Math.floor(swM.y / CELL) - 1, gy1 = Math.ceil(neM.y / CELL) + 1;
+
+    // Approximate cell width in pixels (used to decide visibility of grid)
+    const refLon0 = gx0 * CELL / ER * 180 / Math.PI;
+    const refLon1 = (gx0 + 1) * CELL / ER * 180 / Math.PI;
+    const cellPxW = Math.abs(
+      m.latLngToContainerPoint([ctr.lat, refLon1]).x -
+      m.latLngToContainerPoint([ctr.lat, refLon0]).x
+    );
+
+    // ── Step 1: grid lines (scale opacity + weight with zoom) ───────────────
+    const zoomHint = document.getElementById('zoom-hint');
+    if (cellPxW >= 2) {
+      zoomHint && zoomHint.classList.remove('show');
+
+      // Opacity and line width grow with cell size so lines stay subtle at low zoom
+      const opacity = Math.min(0.45, cellPxW * 0.055);
+      const lw      = Math.min(1.2,  cellPxW * 0.12);
+
+      ctx.beginPath();
+      ctx.strokeStyle = `rgba(120, 210, 120, ${opacity.toFixed(2)})`;
+      ctx.lineWidth   = lw;
+
+      // Vertical lines: constant mercator X = constant longitude = vertical on Mercator map
+      for (let gx = gx0; gx <= gx1 + 1; gx++) {
+        const lon = gx * CELL / ER * 180 / Math.PI;
+        const px  = m.latLngToContainerPoint([ctr.lat, lon]).x;
+        ctx.moveTo(px, 0);
+        ctx.lineTo(px, cv.height);
+      }
+
+      // Horizontal lines: constant mercator Y = constant latitude on Mercator map
+      for (let gy = gy0; gy <= gy1 + 1; gy++) {
+        const lat = (2 * Math.atan(Math.exp(gy * CELL / ER)) - Math.PI / 2) * 180 / Math.PI;
+        const py  = m.latLngToContainerPoint([lat, ctr.lng]).y;
+        ctx.moveTo(0,        py);
+        ctx.lineTo(cv.width, py);
+      }
+
+      ctx.stroke();
+    } else {
+      zoomHint && zoomHint.classList.add('show');
+    }
+
+    // ── Step 2: visited cells (on top of grid lines) ─────────────────────────
+    for (const [key, n] of cells) {
+      const ci = key.indexOf(',');
+      const gx = +key.slice(0, ci), gy = +key.slice(ci + 1);
+      if (gx < gx0 || gx > gx1 || gy < gy0 || gy > gy1) continue;
+
+      const sw = fromMerc(gx * CELL,       gy * CELL);
+      const ne = fromMerc((gx + 1) * CELL, (gy + 1) * CELL);
+      const a  = m.latLngToContainerPoint([sw.lat, sw.lon]); // SW pixel (bottom-left on screen)
+      const b  = m.latLngToContainerPoint([ne.lat, ne.lon]); // NE pixel (top-right on screen)
+
+      const px = a.x, py = b.y, pw = b.x - a.x, ph = a.y - b.y;
+      if (pw < 0.8 || ph < 0.8) continue;
+
+      ctx.fillStyle = cellColor(n);
+      ctx.fillRect(px, py, pw, ph);
+
+      if (pw > 24 && ph > 16) {
+        const fs = Math.min(11, Math.floor(pw * 0.38));
+        ctx.fillStyle = 'rgba(255,255,255,0.80)';
+        ctx.font = `${fs}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(n, px + pw / 2, py + ph / 2);
+      }
+    }
+  }
+});
+
+const grid = new GridLayer().addTo(map);
+
+// ── UI helpers ────────────────────────────────────────────────────────────────
+const elN    = document.getElementById('stat-n');
+const elArea = document.getElementById('stat-area');
+const elDot  = document.getElementById('gps-dot');
+const elTxt  = document.getElementById('gps-txt');
+const btnLoc = document.getElementById('btn-loc');
+
+function fmtArea(n) {
+  const m2 = n * CELL * CELL;
+  if (m2 >= 1e6) return `≈ ${(m2 / 1e6).toFixed(3)} km²`;
+  if (m2 >= 1e4) return `≈ ${(m2 / 1e4).toFixed(1)} ha`;
+  return `≈ ${m2.toLocaleString('nl-NL')} m²`;
+}
+
+function updateUI() {
+  elN.textContent    = cells.size.toLocaleString('nl-NL');
+  elArea.textContent = fmtArea(cells.size);
+}
+
+// ── Follow / zoom buttons ─────────────────────────────────────────────────────
+let followMode = true;
+let gpsMarker  = null;
+
+btnLoc.addEventListener('click', () => {
+  followMode = !followMode;
+  btnLoc.classList.toggle('active', followMode);
+  if (followMode && gpsMarker) map.setView(gpsMarker.getLatLng(), Math.max(map.getZoom(), 15), { animate: false });
+});
+
+document.getElementById('btn-p').addEventListener('click', () => map.zoomIn());
+document.getElementById('btn-m').addEventListener('click', () => map.zoomOut());
+
+// Dragging the map disables auto-follow
+map.on('dragstart', () => { followMode = false; btnLoc.classList.remove('active'); });
+
+// Tap/click on map also registers a visit (useful for testing without GPS)
+map.on('click', (e) => { registerVisit(e.latlng.lat, e.latlng.lng); });
+
+// ── GPS visit registration ────────────────────────────────────────────────────
+let lx = null, ly = null;  // previous mercator position
+let prevKeys = new Set();  // cell keys that were "current" in the previous update
+
+function registerVisit(lat, lon) {
+  const { x, y } = toMerc(lat, lon);
+
+  // Collect all cells on the straight-line path from prev → curr.
+  // Interpolation fills gaps that occur at driving speeds (50 km/h ≈ 14 m/s).
+  const currKeys = new Set();
+
+  if (lx !== null) {
+    const dx = x - lx, dy = y - ly;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    if (dist < 400) { // ignore GPS jumps > 400 m (signal lost/recovered)
+      const steps = Math.max(1, Math.ceil(dist / 5)); // sample every 5 m
+      for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        currKeys.add(
+          `${Math.floor((lx + dx * t) / CELL)},${Math.floor((ly + dy * t) / CELL)}`
+        );
+      }
+    }
+  }
+
+  // Always include the exact current cell
+  currKeys.add(`${Math.floor(x / CELL)},${Math.floor(y / CELL)}`);
+
+  lx = x; ly = y;
+
+  // Only increment cells that weren't part of the previous update
+  // (prevents double-counting when standing still or moving slowly)
+  let changed = false;
+  for (const k of currKeys) {
+    if (!prevKeys.has(k)) {
+      const n = (cells.get(k) || 0) + 1;
+      cells.set(k, n);
+      saveCell(k, n); // write only this cell – no full-dump needed
+      changed = true;
+    }
+  }
+  prevKeys = currKeys;
+
+  if (changed) { updateUI(); grid.draw(); }
+}
+
+// ── Geolocation callbacks ─────────────────────────────────────────────────────
+function onPosition(pos) {
+  const { latitude: lat, longitude: lon, accuracy: acc } = pos.coords;
+
+  elDot.classList.add('on');
+  elTxt.textContent = `±${Math.round(acc)} m nauwkeurig`;
+
+  if (!gpsMarker) {
+    gpsMarker = L.circleMarker([lat, lon], {
+      radius: 9, color: '#fff', weight: 2.5,
+      fillColor: '#60a5fa', fillOpacity: 1
+    }).addTo(map);
+    if (followMode) map.setView([lat, lon], 15, { animate: false });
+  } else {
+    gpsMarker.setLatLng([lat, lon]);
+    if (followMode) map.panTo([lat, lon], { animate: false });
+  }
+
+  registerVisit(lat, lon);
+}
+
+function onError(e) {
+  elDot.classList.remove('on');
+  const msgs = { 1: 'Geen GPS-toestemming', 2: 'GPS niet beschikbaar', 3: 'GPS time-out' };
+  elTxt.textContent = msgs[e.code] ?? 'GPS fout';
+}
+
+// ── Wake Lock: prevent screen from sleeping while tracking ────────────────────
+async function keepAwake() {
+  if ('wakeLock' in navigator) {
+    try { await navigator.wakeLock.request('screen'); } catch { /* not available */ }
+  }
+}
+keepAwake();
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') keepAwake();
+});
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+async function boot() {
+  try {
+    db = await openDB();
+    await migrateFromLS(db);
+    await loadAllCells(db);
+  } catch (e) {
+    console.warn('IndexedDB niet beschikbaar, data wordt niet opgeslagen:', e);
+    // Graceful fallback: load from old localStorage if present
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (raw) cells = new Map(Object.entries(JSON.parse(raw)).map(([k, v]) => [k, +v]));
+    } catch { /* ignore */ }
+  }
+
+  updateUI();
+  grid.draw();
+
+  if (navigator.geolocation) {
+    navigator.geolocation.watchPosition(onPosition, onError, {
+      enableHighAccuracy: true,
+      maximumAge: 0,
+      timeout: 15000
+    });
+  } else {
+    elTxt.textContent = 'Geen geolocatie beschikbaar';
+  }
+}
+
+boot();
+</script>
+</body>
+</html>
