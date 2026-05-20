@@ -27,7 +27,7 @@
       border-radius: 14px; padding: 10px 14px; color: #fff;
     }
 
-    #stat-n    { font-size: 28px; font-weight: 800; color: #4ade80; line-height: 1.05; letter-spacing: -0.5px; }
+    #stat-n    { font-size: 28px; font-weight: 800; color: #fb923c; line-height: 1.05; letter-spacing: -0.5px; }
     #stat-lbl  { font-size: 10px; color: rgba(255,255,255,.50); margin-top: 1px; text-transform: uppercase; letter-spacing: .5px; }
     #stat-area { font-size: 12px; color: rgba(255,255,255,.65); margin-top: 5px; }
     #zoom-hint { font-size: 10px; color: rgba(255,255,255,.40); margin-top: 4px; display: none; }
@@ -39,7 +39,7 @@
       flex-shrink: 0; transition: background .4s, box-shadow .4s;
     }
     #gps-dot.on {
-      background: #22c55e; box-shadow: 0 0 0 3px rgba(34,197,94,.20);
+      background: #f97316; box-shadow: 0 0 0 3px rgba(249,115,22,.20);
       animation: blink 2.4s ease-in-out infinite;
     }
     @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.35} }
@@ -60,8 +60,8 @@
       cursor: pointer; -webkit-tap-highlight-color: transparent; user-select: none;
       transition: border-color .2s, color .2s, background .15s;
     }
-    .fab-btn:active { background: rgba(74,222,128,.15); }
-    .fab-btn.active { border-color: #4ade80; color: #4ade80; }
+    .fab-btn:active { background: rgba(251,146,60,.15); }
+    .fab-btn.active { border-color: #fb923c; color: #fb923c; }
   </style>
 </head>
 <body>
@@ -163,11 +163,12 @@ function saveCell(key, count) {
   catch (e) { console.warn('IDB schrijffout:', e); }
 }
 
-// ── Cell fill color (light → dark green with visits) ─────────────────────────
+// ── Cell fill color (light → dark orange with visits) ────────────────────────
 function cellColor(n) {
   const t = Math.min(1, Math.log1p(n) / Math.log1p(30));
-  const g = Math.round(215 - 165 * t);
-  return `rgba(8,${g},45,${(0.38 + 0.52 * t).toFixed(2)})`;
+  const r = Math.round(255 - 55 * t);
+  const g = Math.round(180 - 120 * t);
+  return `rgba(${r},${g},8,${(0.38 + 0.52 * t).toFixed(2)})`;
 }
 
 // ── Map initialisation ────────────────────────────────────────────────────────
@@ -236,7 +237,7 @@ const GridLayer = L.Layer.extend({
       const lw      = Math.min(1.2,  cellPxW * 0.12);
 
       ctx.beginPath();
-      ctx.strokeStyle = `rgba(120, 210, 120, ${opacity.toFixed(2)})`;
+      ctx.strokeStyle = `rgba(251, 146, 60, ${opacity.toFixed(2)})`;
       ctx.lineWidth   = lw;
 
       // Vertical lines: constant mercator X = constant longitude = vertical on Mercator map
@@ -325,9 +326,6 @@ document.getElementById('btn-m').addEventListener('click', () => map.zoomOut());
 
 // Dragging the map disables auto-follow
 map.on('dragstart', () => { followMode = false; btnLoc.classList.remove('active'); });
-
-// Tap/click on map also registers a visit (useful for testing without GPS)
-map.on('click', (e) => { registerVisit(e.latlng.lat, e.latlng.lng); });
 
 // ── GPS visit registration ────────────────────────────────────────────────────
 let lx = null, ly = null;  // previous mercator position
