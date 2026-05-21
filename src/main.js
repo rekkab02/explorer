@@ -325,7 +325,6 @@ async function boot() {
   grid.draw();
 
   if (Capacitor.isNativePlatform()) {
-    // Native Android: background geolocation via foreground service
     try {
       await BackgroundGeolocation.addWatcher(
         {
