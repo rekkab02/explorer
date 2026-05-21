@@ -332,7 +332,7 @@ async function boot() {
           backgroundTitle: 'GPS Tracker actief',
           requestPermissions: true,
           stale: false,
-          distanceFilter: 10
+          distanceFilter: 0
         },
         (location, error) => {
           if (error) {
