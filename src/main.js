@@ -1,5 +1,6 @@
-import { Capacitor } from '@capacitor/core';
-import { BackgroundGeolocation } from '@capacitor-community/background-geolocation';
+import { Capacitor, registerPlugin } from '@capacitor/core';
+
+const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
 
 // ── Grid constants ────────────────────────────────────────────────────────────
 const CELL = 100;     // metres per side
