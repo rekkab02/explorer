@@ -201,10 +201,7 @@ const elTxt  = document.getElementById('gps-txt');
 const btnLoc = document.getElementById('btn-loc');
 
 function fmtArea(n) {
-  const m2 = n * CELL * CELL;
-  if (m2 >= 1e6) return `≈ ${(m2 / 1e6).toFixed(3)} km²`;
-  if (m2 >= 1e4) return `≈ ${(m2 / 1e4).toFixed(1)} ha`;
-  return `≈ ${m2.toLocaleString('nl-NL')} m²`;
+  return `≈ ${(n * CELL * CELL / 1e6).toFixed(3)} km²`;
 }
 
 function updateUI() {
@@ -224,6 +221,16 @@ btnLoc.addEventListener('click', () => {
 
 document.getElementById('btn-p').addEventListener('click', () => map.zoomIn());
 document.getElementById('btn-m').addEventListener('click', () => map.zoomOut());
+
+document.getElementById('btn-reset').addEventListener('click', () => {
+  if (!confirm('Alle bezochte vakjes wissen?')) return;
+  cells.clear();
+  lx = null; ly = null;
+  prevKeys = new Set();
+  if (db) db.transaction(IDB_STORE, 'readwrite').objectStore(IDB_STORE).clear();
+  updateUI();
+  grid.draw();
+});
 
 map.on('dragstart', () => { followMode = false; btnLoc.classList.remove('active'); });
 
