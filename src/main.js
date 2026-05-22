@@ -222,6 +222,42 @@ btnLoc.addEventListener('click', () => {
 document.getElementById('btn-p').addEventListener('click', () => map.zoomIn());
 document.getElementById('btn-m').addEventListener('click', () => map.zoomOut());
 
+document.getElementById('btn-export').addEventListener('click', async () => {
+  const json = JSON.stringify(Object.fromEntries(cells));
+  const blob = new Blob([json], { type: 'application/json' });
+  const file = new File([blob], 'nl-verkenner.json', { type: 'application/json' });
+  if (navigator.canShare?.({ files: [file] })) {
+    await navigator.share({ files: [file], title: 'NL Verkenner data' });
+  } else {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'nl-verkenner.json';
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+});
+
+document.getElementById('btn-import').addEventListener('click', () => {
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = '.json,application/json';
+  input.onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const obj = JSON.parse(await file.text());
+      for (const [k, n] of Object.entries(obj)) {
+        const count = Math.max(cells.get(k) || 0, +n);
+        cells.set(k, count);
+        saveCell(k, count);
+      }
+      updateUI(); grid.draw();
+    } catch { alert('Importeren mislukt — ongeldig bestand'); }
+  };
+  document.body.appendChild(input); input.click();
+  document.body.removeChild(input);
+});
+
 document.getElementById('btn-reset').addEventListener('click', () => {
   if (!confirm('Alle bezochte vakjes wissen?')) return;
   cells.clear();
