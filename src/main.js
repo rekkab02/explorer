@@ -294,7 +294,7 @@ function onPosition(pos) {
     if (followMode) map.panTo([lat, lon], { animate: false });
   }
 
-  registerVisit(lat, lon);
+  if (acc <= 15) registerVisit(lat, lon);
 }
 
 function onError(e) {
