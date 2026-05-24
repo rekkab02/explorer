@@ -9,9 +9,11 @@
     "open": "cap open android"
   },
   "dependencies": {
+    "@capacitor-community/background-geolocation": "^1.2.4",
     "@capacitor/android": "^6.0.0",
     "@capacitor/core": "^6.0.0",
-    "@capacitor-community/background-geolocation": "^1.2.4"
+    "@capacitor/filesystem": "^8.1.2",
+    "@capacitor/share": "^8.0.1"
   },
   "devDependencies": {
     "@capacitor/cli": "^6.0.0",

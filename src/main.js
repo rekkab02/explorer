@@ -1,4 +1,6 @@
 import { Capacitor, registerPlugin } from '@capacitor/core';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
 
 const BackgroundGeolocation = registerPlugin('BackgroundGeolocation');
 
@@ -224,11 +226,21 @@ document.getElementById('btn-m').addEventListener('click', () => map.zoomOut());
 
 document.getElementById('btn-export').addEventListener('click', async () => {
   const json = JSON.stringify(Object.fromEntries(cells));
-  const blob = new Blob([json], { type: 'application/json' });
-  const file = new File([blob], 'nl-verkenner.json', { type: 'application/json' });
-  if (navigator.canShare?.({ files: [file] })) {
-    await navigator.share({ files: [file], title: 'NL Verkenner data' });
+
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const { uri } = await Filesystem.writeFile({
+        path: 'nl-verkenner.json',
+        data: json,
+        directory: Directory.Cache,
+        encoding: 'utf8'
+      });
+      await Share.share({ title: 'NL Verkenner data', url: uri, dialogTitle: 'Exporteer data' });
+    } catch (e) {
+      alert('Exporteren mislukt: ' + e.message);
+    }
   } else {
+    const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url; a.download = 'nl-verkenner.json';
