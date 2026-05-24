@@ -22,7 +22,6 @@ allprojects {
         google()
         mavenCentral()
     }
-    buildDir = "C:/Dev/explorer-build/${project.name}"
 }
 
 task clean(type: Delete) {
